@@ -5,7 +5,7 @@
    --
    -- FUNCTIONS:
    -- int main (int argc, char **argv)
-   -- void handle(int signo)
+   -- void handle(int signal_number)
    --
    -- DATE: April 3, 2018
    --
@@ -29,15 +29,13 @@
    ----------------------------------------------------------------------------------------------------------------------*/
 
 #include <stdio.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <netdb.h>
 #include <stdlib.h>
-#include <strings.h>
-#include <arpa/inet.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <signal.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 #define SERVER_TCP_PORT 7000  // Default port
 #define BUFLEN  512   //Buffer length
@@ -45,7 +43,7 @@
 #define LISTENQ 5
 #define MAXLINE 4096
 
-void handle(int signo);
+void handle(int signal_number);
 void listening();
 char *ip_list[FD_SETSIZE];
 
@@ -53,10 +51,9 @@ int i, maxi, nready, bytes_to_read, arg;
 int listen_sd, new_sd, sockfd, port, maxfd, client[FD_SETSIZE];
 struct sockaddr_in server, client_addr;
 char *bp, buf[BUFLEN], msg_buffer[BUFLEN], client_ip[BUFLEN];
+unsigned int client_len;
 ssize_t n;
 fd_set rset, allset;
-
-uint client_len;
 
 /*------------------------------------------------------------------------------------------------------------------
    -- FUNCTION: main
@@ -207,23 +204,22 @@ void listening() {
                                         bytes_to_read -= n;
                                 }
 
-                                for (int j = 0; j <= maxi; j++) { // iterate through each client
+                                for (int client_num = 0; client_num <= maxi; client_num++) { // iterate through each client
 
-                                        if (buf[0] == EOF) {
+                                        if (buf[0] == EOF) { // EOF received from quitting client
                                                 printf("Disconnect: %s\n", inet_ntoa(client_addr.sin_addr));
                                                 FD_CLR(sockfd, &allset);
                                                 client[i] = -1;
                                                 break;
                                         }
 
-                                        if ((sockfd = client[j]) < 0 || j == i)
-                                        {
+                                        if ((sockfd = client[client_num]) < 0 || client_num == i) {
                                                 continue;
                                         }
 
                                         strcpy(client_ip, ip_list[i]);
                                         sprintf(msg_buffer, "[%s] %s", client_ip, buf);
-                                        write(client[j], msg_buffer, BUFLEN); // echo to client
+                                        write(client[client_num], msg_buffer, BUFLEN); // echo to client
                                 }
 
                                 if (--nready <= 0) {
@@ -246,15 +242,15 @@ void listening() {
    --
    -- PROGRAMMER: Haley Booker
    --
-   -- INTERFACE: void handle(int signo)
+   -- INTERFACE: void handle(int signal_number)
    --
    -- RETURNS: void
    --
    -- NOTES:
    -- This function logs the list of clients on exit.
    ----------------------------------------------------------------------------------------------------------------------*/
-void handle(int signo) {
-        if(signo == SIGINT) {
+void handle(int signal_number) {
+        if(signal_number == SIGINT) {
                 printf("\nActive clients:\n");
                 for (int i = 0; i < 128; i++) {
                         if (ip_list[i] != 0) {

@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wall -lpthread
+CFLAGS=-Wall -lpthread -W -pedantic
 
 ex: server client
 	$(CC) $(CFLAGS) server.c -o server

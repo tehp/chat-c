@@ -5,9 +5,9 @@
    --
    -- FUNCTIONS:
    -- int main (int argc, char **argv)
-   -- void* readThreadFunc()
-   -- void* sendThreadFunc()
-   -- void handle(int signo)
+   -- void* reader()
+   -- void* sender()
+   -- void handle(int signal_number)
    --
    -- DATE: April 3, 2018
    --
@@ -31,32 +31,27 @@
 
 #include <stdio.h>
 #include <netdb.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <errno.h>
 #include <stdlib.h>
-#include <strings.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <signal.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 #define SERVER_TCP_PORT 7000  // Default port
-#define BUFLEN 512    // Buffer length
+#define BUFLEN 255    // Buffer length
 #define TRUE 1
 
 
-void* readThreadFunc();
-void* sendThreadFunc();
-void handle(int signo);
+void* reader();
+void* sender();
+void handle(int signal_number);
 int n, bytes_to_read, sd;
 char sbuf[BUFLEN], rbuf[BUFLEN], *bp;
-char* log_buffer[8192];
+char* log_buffer[8192]; // everything saved to be logged
 FILE* fp;
 
-int fileIndex = 0;
+int log_i = 0;
 int log_bool;
 
 /*------------------------------------------------------------------------------------------------------------------
@@ -91,12 +86,12 @@ int main (int argc, char **argv) {
 
         switch(argc) {
         case 2:
-                host =  argv[1];
-                port =  SERVER_TCP_PORT;
+                host = argv[1];
+                port = SERVER_TCP_PORT;
                 break;
         case 3:
-                host =  argv[1];
-                port =  atoi(argv[2]);
+                host = argv[1];
+                port = atoi(argv[2]);
                 break;
         case 4:
                 host = argv[1];
@@ -109,12 +104,12 @@ int main (int argc, char **argv) {
                 }
                 break;
         default:
-                fprintf(stderr, "Usage: %s host [port]\n", argv[0]);
+                printf("Usage: %s host [port]\n", argv[0]);
                 exit(1);
         }
 
         if ((sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-                perror("Cannot create socket");
+                printf("Cannot create socket\n");
                 exit(1);
         }
 
@@ -123,15 +118,14 @@ int main (int argc, char **argv) {
         server.sin_port = htons(port);
 
         if ((hp = gethostbyname(host)) == NULL) {
-                fprintf(stderr, "Unknown server address\n");
+                printf("Unknown server address\n");
                 exit(1);
         }
 
         bcopy(hp->h_addr, (char *)&server.sin_addr, hp->h_length);
 
         if (connect (sd, (struct sockaddr *)&server, sizeof(server)) == -1) {
-                fprintf(stderr, "Can't connect to server\n");
-                perror("connect");
+                printf("Can't connect to server\n");
                 exit(1);
         }
 
@@ -139,18 +133,18 @@ int main (int argc, char **argv) {
         pptr = hp->h_addr_list;
         printf("Your IP: %s\n", inet_ntop(hp->h_addrtype, *pptr, str, sizeof(str)));
 
-        pthread_create (&readThread, NULL, readThreadFunc, NULL);
-        pthread_create (&sendThread, NULL, sendThreadFunc, NULL);
-
+        pthread_create (&readThread, NULL, reader, NULL);
         pthread_join(readThread, NULL);
+        pthread_create (&sendThread, NULL, sender, NULL);
         pthread_join(sendThread, NULL);
 
-        close (sd);
-        return (0);
+        close(sd);
+
+        return 0;
 }
 
 /*------------------------------------------------------------------------------------------------------------------
-   -- FUNCTION: readThreadFunc
+   -- FUNCTION: reader
    --
    -- DATE: April 3, 2018
    --
@@ -161,21 +155,23 @@ int main (int argc, char **argv) {
    --
    -- PROGRAMMER: Mackenzie Craig
    --
-   -- INTERFACE: void* readThreadFunc()
+   -- INTERFACE: void* reader()
    --
    -- RETURNS: void
    --
    -- NOTES:
    -- This function loops calling recv (blocking). Once data has been received it is printed to the screen.
    ----------------------------------------------------------------------------------------------------------------------*/
-void* readThreadFunc() {
+void* reader() {
 
-        int k = 0;
-        char* temp[1024];
+        int recv_i = 0;
+        char* recv_buffer[BUFLEN];
+
         bp = rbuf;
         bytes_to_read = BUFLEN;
 
         while (TRUE) {
+
                 n = 0;
 
                 while ((n = recv (sd, bp, bytes_to_read, 0)) < BUFLEN)
@@ -184,18 +180,20 @@ void* readThreadFunc() {
                         bytes_to_read -= n;
                 }
 
-                temp[k]= (char *) malloc(strlen(rbuf) + 1);
-                memcpy(temp[k], rbuf, strlen(rbuf));
+                recv_buffer[recv_i]= (char *) malloc(strlen(rbuf) + 1);
+                memcpy(recv_buffer[recv_i], rbuf, strlen(rbuf));
 
-                log_buffer[fileIndex++] = temp[k++];
-                printf ("%s", rbuf);
+                log_buffer[log_i++] = recv_buffer[recv_i++];
+
+                printf("%s", rbuf);
                 fflush(stdout);
+
         }
 
 }
 
 /*------------------------------------------------------------------------------------------------------------------
-   -- FUNCTION: sendThreadFunc
+   -- FUNCTION: sender
    --
    -- DATE: April 3, 2018
    --
@@ -206,28 +204,31 @@ void* readThreadFunc() {
    --
    -- PROGRAMMER: Mackenzie Craig
    --
-   -- INTERFACE: void* sendThreadFunc()
+   -- INTERFACE: void* sender()
    --
    -- RETURNS: void
    --
    -- NOTES:
    -- This function loops calling send after data is entered in the shell. fgets() is the blocking call here.
    ----------------------------------------------------------------------------------------------------------------------*/
-void* sendThreadFunc() {
-        int k = 0;
-        char* temp[1024];
+void* sender() {
+
+        int buf_i = 0;
+        char* send_buffer[BUFLEN];
 
         while (TRUE) {
-                fgets (sbuf, BUFLEN, stdin);
+                fgets (sbuf, BUFLEN, stdin); // blocks
 
-                temp[k]= (char *) malloc(strlen(sbuf) + 1);
-                memcpy(temp[k], sbuf, strlen(sbuf));
-                log_buffer[fileIndex++] = temp[k++];
+                send_buffer[buf_i] = (char*)malloc(strlen(sbuf) + 1);
+                memcpy(send_buffer[buf_i], sbuf, strlen(sbuf));
 
-                send (sd, sbuf, BUFLEN, 0);
+                log_buffer[log_i++] = send_buffer[buf_i++];
+
+                send(sd, sbuf, BUFLEN, 0);
         }
 
         return NULL;
+
 }
 
 /*------------------------------------------------------------------------------------------------------------------
@@ -242,15 +243,16 @@ void* sendThreadFunc() {
    --
    -- PROGRAMMER: Mackenzie Craig
    --
-   -- INTERFACE: void handle(int signo)
+   -- INTERFACE: void handle(int signal_number)
    --
    -- RETURNS: void
    --
    -- NOTES:
    -- This function logs the chat to the file on close if the log flag was used.
    ----------------------------------------------------------------------------------------------------------------------*/
-void handle(int signo) {
-        if(signo == SIGINT) {
+void handle(int signal_number) {
+        if(signal_number == SIGINT) {
+
                 if (log_bool == 1) {
                         int i = 0;
                         fp = fopen("log.txt", "a");
@@ -258,11 +260,13 @@ void handle(int signo) {
                         while (log_buffer[i] != NULL) {
                                 fputs(log_buffer[i++], fp);
                         }
+
                         fclose(fp);
                 }
-                char eof[2];
-                eof[0] = EOF;
-                send(sd, eof, BUFLEN, 0);
+
+                char end = EOF;
+
+                send(sd, &end, BUFLEN, 0);
                 kill(getpid(), SIGTERM);
         }
 }
